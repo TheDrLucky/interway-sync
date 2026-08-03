@@ -12,6 +12,7 @@ TEMPLATE_STORAGE=${TEMPLATE_STORAGE:-}
 PRIVILEGED=${INTERWAY_PRIVILEGED:-0}
 GOOGLE_KEY=${GOOGLE_KEY:-/root/interway-google.json}
 GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID:-350914e26857c495db40f6b0fab2fa03cb40e80f0296a7e1d55638d295db120d@group.calendar.google.com}
+INTERWAY_USER=${INTERWAY_USER:-}
 RAW_URL="https://raw.githubusercontent.com/TheDrLucky/interway-sync/main"
 INSTALL_DIR=$(mktemp -d /tmp/interway-sync.XXXXXX)
 CREATED=0
@@ -45,7 +46,9 @@ if ((PRIVILEGED)); then
     echo "Mode de compatibilité : création d'un LXC privilégié dédié à Interway Sync."
 fi
 
-read -r -p "Identifiant Interway : " INTERWAY_USER
+if [[ -z "$INTERWAY_USER" ]]; then
+    read -r -p "Identifiant Interway : " INTERWAY_USER
+fi
 read -r -s -p "Mot de passe Interway : " INTERWAY_PASSWORD
 echo
 [[ "$INTERWAY_USER" =~ ^[0-9]+$ ]] || die "l'identifiant Interway doit contenir uniquement des chiffres"
