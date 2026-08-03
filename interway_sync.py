@@ -283,17 +283,17 @@ def extract(
     }
 
 
-def shift_week(page: Page, direction: str, wait_ms: int) -> None:
+def shift_week(page: Page, direction: str, wait_ms: int) -> bool:
     before = clean(find_calendar(page).inner_text())
     button = page.get_by_role("button", name=direction, exact=True)
     if button.count() != 1:
         raise RuntimeError(f"Flèche « {direction} » introuvable.")
     button.click()
-    page.wait_for_timeout(wait_ms)
-    if clean(find_calendar(page).inner_text()) == before:
-        page.wait_for_timeout(3_000)
-    if clean(find_calendar(page).inner_text()) == before:
-        raise RuntimeError(f"Le planning n'a pas changé après « {direction} ».")
+    for _ in range(max(wait_ms, 15_000) // 500):
+        page.wait_for_timeout(500)
+        if clean(find_calendar(page).inner_text()) != before:
+            return True
+    return False
 
 
 def main() -> int:
@@ -369,7 +369,8 @@ def main() -> int:
                     wait_for_technician(page, args.technicien)
 
             for _ in range(args.previous_weeks):
-                shift_week(page, "Précédent", args.navigation_ms)
+                if not shift_week(page, "Précédent", args.navigation_ms):
+                    break
 
             merged_days = {}
             periods = []
@@ -386,7 +387,8 @@ def main() -> int:
                 if not periods or periods[-1] != current["periode"]:
                     periods.append(current["periode"])
                 if window + 1 < window_count:
-                    shift_week(page, "Suivant", args.navigation_ms)
+                    if not shift_week(page, "Suivant", args.navigation_ms):
+                        break
 
             result = {
                 "source": "Planning Tech Web Interway",
