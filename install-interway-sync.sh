@@ -10,6 +10,7 @@ GATEWAY=${GATEWAY:-192.168.10.1}
 ROOTFS_STORAGE=${ROOTFS_STORAGE:-}
 TEMPLATE_STORAGE=${TEMPLATE_STORAGE:-}
 PRIVILEGED=${INTERWAY_PRIVILEGED:-0}
+ADOPT=${INTERWAY_ADOPT:-0}
 GOOGLE_KEY=${GOOGLE_KEY:-/root/interway-google.json}
 GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID:-350914e26857c495db40f6b0fab2fa03cb40e80f0296a7e1d55638d295db120d@group.calendar.google.com}
 INTERWAY_USER=${INTERWAY_USER:-}
@@ -37,6 +38,7 @@ trap cleanup EXIT
 [[ $EUID -eq 0 ]] || die "lance cette commande dans le Shell Proxmox en root"
 [[ "$CTID" =~ ^[1-9][0-9]{2,}$ ]] || die "numéro LXC invalide : $CTID"
 [[ "$PRIVILEGED" =~ ^[01]$ ]] || die "INTERWAY_PRIVILEGED doit valoir 0 ou 1"
+[[ "$ADOPT" =~ ^[01]$ ]] || die "INTERWAY_ADOPT doit valoir 0 ou 1"
 for command in awk curl dpkg grep ip pct pveam pvesm; do
     command -v "$command" >/dev/null || die "commande Proxmox manquante : $command"
 done
@@ -57,22 +59,28 @@ printf '%s\n%s\n' "$INTERWAY_USER" "$INTERWAY_PASSWORD" >"$INSTALL_DIR/credentia
 unset INTERWAY_PASSWORD
 umask 022
 
+ADOPTED=0
 if pct config "$CTID" >/dev/null 2>&1; then
-    pct exec "$CTID" -- test -f /opt/interway-sync/interway_sync.py || \
-        die "le LXC $CTID existe déjà et n'appartient pas à Interway Sync"
     pct status "$CTID" | grep -q running || pct start "$CTID"
-    pct push "$CTID" "$INSTALL_DIR/credentials" /etc/interway-sync/credentials --perms 0640
-    if [[ -f "$GOOGLE_KEY" ]]; then
-        pct push "$CTID" "$GOOGLE_KEY" /etc/interway-sync/google-service-account.json --perms 0640
+    if pct exec "$CTID" -- test -f /opt/interway-sync/interway_sync.py; then
+        pct push "$CTID" "$INSTALL_DIR/credentials" /etc/interway-sync/credentials --perms 0640
+        if [[ -f "$GOOGLE_KEY" ]]; then
+            pct push "$CTID" "$GOOGLE_KEY" /etc/interway-sync/google-service-account.json --perms 0640
+        fi
+        pct exec "$CTID" -- test -f /etc/interway-sync/google-service-account.json || \
+            die "clé Google manquante : $GOOGLE_KEY"
+        pct exec "$CTID" -- chown root:interway-sync /etc/interway-sync/credentials /etc/interway-sync/google-service-account.json
+        pct exec "$CTID" -- systemctl start interway-sync.service
+        trap - EXIT
+        rm -rf -- "$INSTALL_DIR"
+        echo "Mot de passe mis à jour dans le LXC $CTID."
+        exit 0
     fi
-    pct exec "$CTID" -- test -f /etc/interway-sync/google-service-account.json || \
-        die "clé Google manquante : $GOOGLE_KEY"
-    pct exec "$CTID" -- chown root:interway-sync /etc/interway-sync/credentials /etc/interway-sync/google-service-account.json
-    pct exec "$CTID" -- systemctl start interway-sync.service
-    trap - EXIT
-    rm -rf -- "$INSTALL_DIR"
-    echo "Mot de passe mis à jour dans le LXC $CTID."
-    exit 0
+    ((ADOPT)) || die "le LXC $CTID existe déjà et n'appartient pas à Interway Sync"
+    pct config "$CTID" | grep -qx "hostname: $LXC_HOSTNAME" || \
+        die "le nom du LXC $CTID ne correspond pas à Interway Sync"
+    ADOPTED=1
+    echo "Reprise du LXC $CTID préparé pour Interway Sync."
 fi
 
 [[ -f "$GOOGLE_KEY" ]] || die "clé Google manquante : $GOOGLE_KEY"
@@ -80,38 +88,40 @@ fi
 curl -fsSL "$RAW_URL/interway_sync.py" -o "$INSTALL_DIR/interway_sync.py"
 curl -fsSL "$RAW_URL/requirements.txt" -o "$INSTALL_DIR/requirements.txt"
 
-if [[ -z "$ROOTFS_STORAGE" ]]; then
-    ROOTFS_STORAGE=$(pvesm status --content rootdir --enabled 1 2>/dev/null | awk 'NR > 1 && $3 == "active" {print $1; exit}')
-fi
-if [[ -z "$TEMPLATE_STORAGE" ]]; then
-    TEMPLATE_STORAGE=$(pvesm status --content vztmpl --enabled 1 2>/dev/null | awk 'NR > 1 && $3 == "active" {print $1; exit}')
-fi
-[[ -n "$ROOTFS_STORAGE" ]] || die "aucun stockage LXC actif trouvé"
-[[ -n "$TEMPLATE_STORAGE" ]] || die "aucun stockage de modèles actif trouvé"
+if ((!ADOPTED)); then
+    if [[ -z "$ROOTFS_STORAGE" ]]; then
+        ROOTFS_STORAGE=$(pvesm status --content rootdir --enabled 1 2>/dev/null | awk 'NR > 1 && $3 == "active" {print $1; exit}')
+    fi
+    if [[ -z "$TEMPLATE_STORAGE" ]]; then
+        TEMPLATE_STORAGE=$(pvesm status --content vztmpl --enabled 1 2>/dev/null | awk 'NR > 1 && $3 == "active" {print $1; exit}')
+    fi
+    [[ -n "$ROOTFS_STORAGE" ]] || die "aucun stockage LXC actif trouvé"
+    [[ -n "$TEMPLATE_STORAGE" ]] || die "aucun stockage de modèles actif trouvé"
 
-pveam update
-TEMPLATE=$(pveam available --section system | awk '$2 ~ /^debian-12-standard_.*_amd64.tar.zst$/ {value=$2} END {print value}')
-if [[ -z "$TEMPLATE" ]]; then
-    TEMPLATE=$(pveam available --section system | awk '$2 ~ /^debian-13-standard_.*_amd64.tar.zst$/ {value=$2} END {print value}')
-fi
-[[ -n "$TEMPLATE" ]] || die "modèle Debian 12 ou 13 amd64 introuvable"
-if ! pveam list "$TEMPLATE_STORAGE" | awk 'NR > 1 {print $1}' | grep -qx "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}"; then
-    pveam download "$TEMPLATE_STORAGE" "$TEMPLATE"
-fi
+    pveam update
+    TEMPLATE=$(pveam available --section system | awk '$2 ~ /^debian-12-standard_.*_amd64.tar.zst$/ {value=$2} END {print value}')
+    if [[ -z "$TEMPLATE" ]]; then
+        TEMPLATE=$(pveam available --section system | awk '$2 ~ /^debian-13-standard_.*_amd64.tar.zst$/ {value=$2} END {print value}')
+    fi
+    [[ -n "$TEMPLATE" ]] || die "modèle Debian 12 ou 13 amd64 introuvable"
+    if ! pveam list "$TEMPLATE_STORAGE" | awk 'NR > 1 {print $1}' | grep -qx "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}"; then
+        pveam download "$TEMPLATE_STORAGE" "$TEMPLATE"
+    fi
 
-pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
-    --hostname "$LXC_HOSTNAME" \
-    --cores 1 \
-    --memory 1024 \
-    --swap 512 \
-    --rootfs "${ROOTFS_STORAGE}:8" \
-    --net0 "name=eth0,bridge=${BRIDGE},ip=${IP_ADDRESS},gw=${GATEWAY},type=veth" \
-    --unprivileged "$((1 - PRIVILEGED))" \
-    --features nesting=1 \
-    --timezone Europe/Paris \
-    --onboot 1 \
-    --start 1
-CREATED=1
+    pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
+        --hostname "$LXC_HOSTNAME" \
+        --cores 1 \
+        --memory 1024 \
+        --swap 512 \
+        --rootfs "${ROOTFS_STORAGE}:8" \
+        --net0 "name=eth0,bridge=${BRIDGE},ip=${IP_ADDRESS},gw=${GATEWAY},type=veth" \
+        --unprivileged "$((1 - PRIVILEGED))" \
+        --features nesting=1 \
+        --timezone Europe/Paris \
+        --onboot 1 \
+        --start 1
+    CREATED=1
+fi
 
 for _ in {1..30}; do
     pct exec "$CTID" -- true >/dev/null 2>&1 && break
@@ -130,7 +140,12 @@ pct exec "$CTID" -- runuser -u _apt -- getent hosts deb.debian.org >/dev/null 2>
 pct exec "$CTID" -- bash -lc '
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
+attempt=0
+until apt-get -o APT::Update::Error-Mode=any update; do
+    attempt=$((attempt + 1))
+    ((attempt < 6)) || exit 1
+    sleep 10
+done
 apt-get install -y ca-certificates python3 python3-venv
 id -u interway-sync >/dev/null 2>&1 || useradd --system --home-dir /var/lib/interway-sync --create-home --shell /usr/sbin/nologin interway-sync
 install -d -o root -g root -m 0755 /opt/interway-sync
