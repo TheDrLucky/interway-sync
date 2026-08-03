@@ -1,6 +1,6 @@
 # Interway Sync pour Proxmox
 
-Crée un LXC `140`, se connecte à Planning Tech Web et extrait chaque jour les interventions EPACK dans un fichier JSON. Aucune connexion Odoo n'est incluse.
+Crée un LXC `140`, se connecte à Planning Tech Web et synchronise chaque jour les interventions EPACK vers l'agenda Google `Interway`. Aucune connexion Odoo n'est incluse.
 
 Dans le **Shell du serveur Proxmox**, colle cette ligne :
 
@@ -8,7 +8,7 @@ Dans le **Shell du serveur Proxmox**, colle cette ligne :
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/TheDrLucky/interway-sync/main/install-interway-sync.sh)"
 ```
 
-L'installation demande l'identifiant Interway puis le mot de passe, sans afficher celui-ci. Elle crée un LXC Debian avec 1 cœur, 1 Go de mémoire et 8 Go de disque, puis vérifie une première extraction. Le planning est ensuite actualisé tous les jours à 06:00, heure de Paris.
+La clé Google doit être présente sur Proxmox dans `/root/interway-google.json`. L'installation demande l'identifiant Interway puis le mot de passe, sans afficher celui-ci. Elle crée un LXC Debian avec 1 cœur, 1 Go de mémoire et 8 Go de disque, puis vérifie une première synchronisation. Le planning est ensuite actualisé tous les jours à 06:00, heure de Paris.
 
 Lors du prochain changement de mot de passe, relance exactement la même commande : elle mettra uniquement les identifiants à jour dans le LXC géré par Interway Sync.
 

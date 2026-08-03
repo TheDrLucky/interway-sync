@@ -4,7 +4,35 @@ from tempfile import TemporaryDirectory
 
 from playwright.sync_api import sync_playwright
 
-from interway_sync import extract, infer_dates, parse_epacks, read_credentials
+from interway_sync import (
+    extract,
+    infer_dates,
+    parse_epacks,
+    read_credentials,
+    sync_google_calendar,
+)
+
+
+class Response:
+    def __init__(self, status_code, data=None):
+        self.status_code = status_code
+        self.data = data or {}
+        self.ok = 200 <= status_code < 300
+
+    def json(self):
+        return self.data
+
+
+class CalendarSession:
+    def __init__(self):
+        self.created = None
+
+    def get(self, url):
+        return Response(404)
+
+    def post(self, url, params, json):
+        self.created = json
+        return Response(200, json)
 
 
 class InterwaySyncTest(unittest.TestCase):
@@ -83,6 +111,31 @@ class InterwaySyncTest(unittest.TestCase):
 
         self.assertEqual(result["jours"][0]["date"], "2026-06-29")
         self.assertEqual(result["jours"][0]["interventions"][0]["reference"], "SV2603190555")
+
+    def test_google_calendar_event_creation(self):
+        session = CalendarSession()
+        planning = {
+            "jours": [
+                {
+                    "date": "2026-07-06",
+                    "interventions": [
+                        {
+                            "heure": "11:33",
+                            "ville": "Vern-sur-Seiche",
+                            "activite": "EP_Config99",
+                            "duree_minutes": 15,
+                            "reference": "SV2603190555",
+                        }
+                    ],
+                }
+            ]
+        }
+
+        result = sync_google_calendar(planning, Path("unused.json"), "calendar@example.com", session)
+
+        self.assertEqual(result, {"created": 1, "updated": 0, "unchanged": 0})
+        self.assertEqual(session.created["summary"], "EPACK - Vern-sur-Seiche")
+        self.assertEqual(session.created["start"]["dateTime"], "2026-07-06T11:33:00+02:00")
 
 
 if __name__ == "__main__":

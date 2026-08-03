@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
 import unicodedata
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
+from google.auth.transport.requests import AuthorizedSession
+from google.oauth2 import service_account
 from playwright.sync_api import Locator, Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 
@@ -39,6 +44,8 @@ TOOLTIP_SELECTOR = ",".join(
         '[class*="popover" i]',
     )
 )
+CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+PARIS = ZoneInfo("Europe/Paris")
 
 
 def clean(value: str) -> str:
@@ -296,6 +303,70 @@ def shift_week(page: Page, direction: str, wait_ms: int) -> bool:
     return False
 
 
+def google_event(day: dict[str, object], intervention: dict[str, object]) -> dict[str, object]:
+    start = datetime.fromisoformat(f'{day["date"]}T{intervention["heure"]}').replace(tzinfo=PARIS)
+    end = start + timedelta(minutes=int(intervention.get("duree_minutes") or 15))
+    reference = intervention.get("reference")
+    identity = reference or f'{day["date"]}|{intervention["heure"]}|{intervention["ville"]}'
+    description = ["Source : Planning Tech Web Interway"]
+    if intervention.get("activite"):
+        description.append(f'Activité : {intervention["activite"]}')
+    if reference:
+        description.append(f'Référence : {reference}')
+    return {
+        "id": hashlib.sha256(f"interway:{identity}".encode()).hexdigest(),
+        "summary": f'EPACK - {intervention["ville"]}',
+        "location": intervention["ville"],
+        "description": "\n".join(description),
+        "start": {"dateTime": start.isoformat(), "timeZone": "Europe/Paris"},
+        "end": {"dateTime": end.isoformat(), "timeZone": "Europe/Paris"},
+        "visibility": "private",
+    }
+
+
+def sync_google_calendar(
+    planning: dict[str, object], credentials_path: Path, calendar_id: str, session=None
+) -> dict[str, int]:
+    if session is None:
+        try:
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path, scopes=[CALENDAR_SCOPE]
+            )
+            session = AuthorizedSession(credentials)
+        except (OSError, ValueError) as error:
+            raise RuntimeError("La clé Google Agenda est invalide ou illisible.") from error
+
+    base_url = f"https://www.googleapis.com/calendar/v3/calendars/{quote(calendar_id, safe='')}/events"
+    stats = {"created": 0, "updated": 0, "unchanged": 0}
+    compared_fields = ("summary", "location", "description", "start", "end", "visibility")
+
+    for day in planning["jours"]:
+        for intervention in day["interventions"]:
+            event = google_event(day, intervention)
+            event_url = f'{base_url}/{event["id"]}'
+            try:
+                response = session.get(event_url)
+                if response.status_code == 404:
+                    response = session.post(base_url, params={"sendUpdates": "none"}, json=event)
+                    action = "created"
+                elif response.ok and all(response.json().get(key) == event[key] for key in compared_fields):
+                    stats["unchanged"] += 1
+                    continue
+                elif response.ok:
+                    response = session.put(
+                        event_url, params={"sendUpdates": "none"}, json=event
+                    )
+                    action = "updated"
+                else:
+                    action = ""
+            except Exception as error:
+                raise RuntimeError("Connexion à Google Agenda impossible.") from error
+            if not response.ok:
+                raise RuntimeError(f"Google Agenda a répondu avec l'erreur {response.status_code}.")
+            stats[action] += 1
+    return stats
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Extrait le planning Interway visible en JSON.")
     parser.add_argument("--login", action="store_true", help="ouvre Chromium pour une connexion manuelle")
@@ -311,6 +382,17 @@ def main() -> int:
     parser.add_argument("--next-weeks", type=int, default=0)
     parser.add_argument("--navigation-ms", type=int, default=1800)
     parser.add_argument("--year", type=int, help="année de départ si l'intitulé Interway est ambigu")
+    parser.add_argument(
+        "--google-credentials",
+        type=Path,
+        default=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+        help="clé JSON du compte de service Google",
+    )
+    parser.add_argument(
+        "--google-calendar",
+        default=os.getenv("GOOGLE_CALENDAR_ID"),
+        help="identifiant de l'agenda Google cible",
+    )
     args = parser.parse_args()
 
     if args.hover_ms < 200:
@@ -321,6 +403,8 @@ def main() -> int:
         parser.error("--navigation-ms doit être supérieur ou égal à 200")
     if not args.technicien:
         parser.error("--technicien est obligatoire")
+    if bool(args.google_credentials) != bool(args.google_calendar):
+        parser.error("--google-credentials et --google-calendar doivent être fournis ensemble")
     args.profile.mkdir(parents=True, exist_ok=True, mode=0o700)
     args.profile.chmod(0o700)
 
@@ -417,6 +501,17 @@ def main() -> int:
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     epack_count = sum(len(day["interventions"]) for day in result["jours"])
     print(f'{len(result["jours"])} jours et {epack_count} EPACK écrits dans {args.output}')
+    if args.google_credentials:
+        try:
+            stats = sync_google_calendar(result, args.google_credentials, args.google_calendar)
+        except RuntimeError as error:
+            print(f"Erreur : {error}", file=sys.stderr)
+            return 1
+        print(
+            "Google Agenda : "
+            f'{stats["created"]} créé(s), {stats["updated"]} modifié(s), '
+            f'{stats["unchanged"]} inchangé(s).'
+        )
     return 0
 
 
