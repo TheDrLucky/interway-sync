@@ -20,6 +20,12 @@ Le résultat se trouve dans le LXC :
 
 Le script refuse d'écraser un LXC existant qui n'appartient pas à Interway Sync. Si une nouvelle installation échoue, il supprime uniquement le LXC qu'il vient de créer.
 
+Si le stockage Proxmox refuse la création du LXC non privilégié avec `Cannot open: Permission denied`, utilise le mode de compatibilité :
+
+```bash
+INTERWAY_PRIVILEGED=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/TheDrLucky/interway-sync/main/install-interway-sync.sh)"
+```
+
 ## Vérification du code
 
 ```bash

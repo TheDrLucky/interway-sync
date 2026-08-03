@@ -7,6 +7,7 @@ LXC_HOSTNAME=${LXC_HOSTNAME:-interway-sync}
 BRIDGE=${BRIDGE:-vmbr0}
 ROOTFS_STORAGE=${ROOTFS_STORAGE:-}
 TEMPLATE_STORAGE=${TEMPLATE_STORAGE:-}
+PRIVILEGED=${INTERWAY_PRIVILEGED:-0}
 RAW_URL="https://raw.githubusercontent.com/TheDrLucky/interway-sync/main"
 INSTALL_DIR=$(mktemp -d /tmp/interway-sync.XXXXXX)
 CREATED=0
@@ -30,11 +31,15 @@ trap cleanup EXIT
 
 [[ $EUID -eq 0 ]] || die "lance cette commande dans le Shell Proxmox en root"
 [[ "$CTID" =~ ^[1-9][0-9]{2,}$ ]] || die "numéro LXC invalide : $CTID"
+[[ "$PRIVILEGED" =~ ^[01]$ ]] || die "INTERWAY_PRIVILEGED doit valoir 0 ou 1"
 for command in awk curl dpkg grep ip pct pveam pvesm; do
     command -v "$command" >/dev/null || die "commande Proxmox manquante : $command"
 done
 [[ $(dpkg --print-architecture) == amd64 ]] || die "cet installateur nécessite un serveur Proxmox amd64"
 ip link show "$BRIDGE" >/dev/null 2>&1 || die "réseau Proxmox introuvable : $BRIDGE"
+if ((PRIVILEGED)); then
+    echo "Mode de compatibilité : création d'un LXC privilégié dédié à Interway Sync."
+fi
 
 read -r -p "Identifiant Interway : " INTERWAY_USER
 read -r -s -p "Mot de passe Interway : " INTERWAY_PASSWORD
@@ -86,7 +91,7 @@ pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
     --swap 512 \
     --rootfs "${ROOTFS_STORAGE}:8" \
     --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp,type=veth" \
-    --unprivileged 1 \
+    --unprivileged "$((1 - PRIVILEGED))" \
     --features nesting=1 \
     --timezone Europe/Paris \
     --onboot 1 \
