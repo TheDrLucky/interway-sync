@@ -5,6 +5,8 @@ umask 077
 CTID=${CTID:-140}
 LXC_HOSTNAME=${LXC_HOSTNAME:-interway-sync}
 BRIDGE=${BRIDGE:-vmbr0}
+IP_ADDRESS=${IP_ADDRESS:-192.168.10.${CTID}/24}
+GATEWAY=${GATEWAY:-192.168.10.1}
 ROOTFS_STORAGE=${ROOTFS_STORAGE:-}
 TEMPLATE_STORAGE=${TEMPLATE_STORAGE:-}
 PRIVILEGED=${INTERWAY_PRIVILEGED:-0}
@@ -99,7 +101,7 @@ pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
     --memory 1024 \
     --swap 512 \
     --rootfs "${ROOTFS_STORAGE}:8" \
-    --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp,type=veth" \
+    --net0 "name=eth0,bridge=${BRIDGE},ip=${IP_ADDRESS},gw=${GATEWAY},type=veth" \
     --unprivileged "$((1 - PRIVILEGED))" \
     --features nesting=1 \
     --timezone Europe/Paris \
@@ -112,6 +114,13 @@ for _ in {1..30}; do
     sleep 1
 done
 pct exec "$CTID" -- true >/dev/null 2>&1 || die "le nouveau LXC ne démarre pas"
+
+for _ in {1..30}; do
+    pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 && break
+    sleep 2
+done
+pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 || \
+    die "le nouveau LXC n'a pas accès au réseau"
 
 pct exec "$CTID" -- bash -lc '
 set -Eeuo pipefail
