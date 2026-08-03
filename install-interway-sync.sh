@@ -55,6 +55,7 @@ echo
 [[ -n "$INTERWAY_PASSWORD" ]] || die "le mot de passe Interway est vide"
 printf '%s\n%s\n' "$INTERWAY_USER" "$INTERWAY_PASSWORD" >"$INSTALL_DIR/credentials"
 unset INTERWAY_PASSWORD
+umask 022
 
 if pct config "$CTID" >/dev/null 2>&1; then
     pct exec "$CTID" -- test -f /opt/interway-sync/interway_sync.py || \
@@ -117,12 +118,13 @@ for _ in {1..30}; do
     sleep 1
 done
 pct exec "$CTID" -- true >/dev/null 2>&1 || die "le nouveau LXC ne démarre pas"
+pct exec "$CTID" -- chmod 0644 /etc/resolv.conf
 
 for _ in {1..30}; do
-    pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 && break
+    pct exec "$CTID" -- runuser -u _apt -- getent hosts deb.debian.org >/dev/null 2>&1 && break
     sleep 2
 done
-pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 || \
+pct exec "$CTID" -- runuser -u _apt -- getent hosts deb.debian.org >/dev/null 2>&1 || \
     die "le nouveau LXC n'a pas accès au réseau"
 
 pct exec "$CTID" -- bash -lc '
