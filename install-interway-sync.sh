@@ -59,6 +59,22 @@ printf '%s\n%s\n' "$INTERWAY_USER" "$INTERWAY_PASSWORD" >"$INSTALL_DIR/credentia
 unset INTERWAY_PASSWORD
 umask 022
 
+curl -fsSL "$RAW_URL/interway_sync.py" -o "$INSTALL_DIR/interway_sync.py"
+cat >"$INSTALL_DIR/interway-sync.timer" <<'EOF'
+[Unit]
+Description=Extraction du planning Interway trois fois par jour
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+OnCalendar=*-*-* 12:00:00
+OnCalendar=*-*-* 18:00:00
+Persistent=true
+Unit=interway-sync.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
 ADOPTED=0
 if pct config "$CTID" >/dev/null 2>&1; then
     pct status "$CTID" | grep -q running || pct start "$CTID"
@@ -69,11 +85,13 @@ if pct config "$CTID" >/dev/null 2>&1; then
         fi
         pct exec "$CTID" -- test -f /etc/interway-sync/google-service-account.json || \
             die "clé Google manquante : $GOOGLE_KEY"
+        pct push "$CTID" "$INSTALL_DIR/interway_sync.py" /opt/interway-sync/interway_sync.py --perms 0755
+        pct push "$CTID" "$INSTALL_DIR/interway-sync.timer" /etc/systemd/system/interway-sync.timer --perms 0644
         pct exec "$CTID" -- chown root:interway-sync /etc/interway-sync/credentials /etc/interway-sync/google-service-account.json
-        pct exec "$CTID" -- systemctl start interway-sync.service
+        pct exec "$CTID" -- bash -lc 'systemctl daemon-reload; systemctl start interway-sync.service; systemctl enable interway-sync.timer; systemctl restart interway-sync.timer'
         trap - EXIT
         rm -rf -- "$INSTALL_DIR"
-        echo "Mot de passe mis à jour dans le LXC $CTID."
+        echo "Interway Sync mis à jour dans le LXC $CTID."
         exit 0
     fi
     ((ADOPT)) || die "le LXC $CTID existe déjà et n'appartient pas à Interway Sync"
@@ -85,7 +103,6 @@ fi
 
 [[ -f "$GOOGLE_KEY" ]] || die "clé Google manquante : $GOOGLE_KEY"
 
-curl -fsSL "$RAW_URL/interway_sync.py" -o "$INSTALL_DIR/interway_sync.py"
 curl -fsSL "$RAW_URL/requirements.txt" -o "$INSTALL_DIR/requirements.txt"
 
 if ((!ADOPTED)); then
@@ -175,19 +192,6 @@ ReadWritePaths=/var/lib/interway-sync
 TimeoutStartSec=15min
 EOF
 
-cat >"$INSTALL_DIR/interway-sync.timer" <<'EOF'
-[Unit]
-Description=Extraction quotidienne du planning Interway
-
-[Timer]
-OnCalendar=*-*-* 06:00:00
-Persistent=true
-Unit=interway-sync.service
-
-[Install]
-WantedBy=timers.target
-EOF
-
 pct push "$CTID" "$INSTALL_DIR/interway_sync.py" /opt/interway-sync/interway_sync.py --perms 0755
 pct push "$CTID" "$INSTALL_DIR/requirements.txt" /opt/interway-sync/requirements.txt --perms 0644
 pct push "$CTID" "$INSTALL_DIR/credentials" /etc/interway-sync/credentials --perms 0640
@@ -212,4 +216,4 @@ systemctl is-active --quiet interway-sync.timer
 CREATED=0
 trap - EXIT
 rm -rf -- "$INSTALL_DIR"
-echo "Terminé : LXC $CTID installé et planning actualisé chaque jour à 06:00."
+echo "Terminé : LXC $CTID installé et planning actualisé à 06:00, 12:00 et 18:00."

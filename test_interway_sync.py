@@ -26,13 +26,33 @@ class Response:
 class CalendarSession:
     def __init__(self):
         self.created = None
+        self.events = {
+            "manual": {"id": "manual", "summary": "Personnel"},
+        }
 
-    def get(self, url):
-        return Response(404)
+    def get(self, url, params=None):
+        if params is not None:
+            return Response(200, {"items": list(self.events.values())})
+        event = self.events.get(url.rsplit("/", 1)[-1])
+        return Response(200, event) if event else Response(404)
 
     def post(self, url, params, json):
         self.created = json
+        self.events[json["id"]] = json
         return Response(200, json)
+
+    def put(self, url, params, json):
+        self.events[json["id"]] = json
+        return Response(200, json)
+
+    def patch(self, url, params, json):
+        event = self.events[url.rsplit("/", 1)[-1]]
+        event.update(json)
+        return Response(200, event)
+
+    def delete(self, url, params):
+        self.events.pop(url.rsplit("/", 1)[-1])
+        return Response(204)
 
 
 class InterwaySyncTest(unittest.TestCase):
@@ -133,9 +153,20 @@ class InterwaySyncTest(unittest.TestCase):
 
         result = sync_google_calendar(planning, Path("unused.json"), "calendar@example.com", session)
 
-        self.assertEqual(result, {"created": 1, "updated": 0, "unchanged": 0})
+        self.assertEqual(
+            result,
+            {"created": 1, "updated": 0, "unchanged": 0, "pending_deletion": 0, "deleted": 0},
+        )
         self.assertEqual(session.created["summary"], "EPACK - Vern-sur-Seiche")
         self.assertEqual(session.created["start"]["dateTime"], "2026-07-06T11:33:00+02:00")
+
+        empty_planning = {"jours": [{"date": "2026-07-06", "interventions": []}]}
+        first_miss = sync_google_calendar(empty_planning, Path("unused.json"), "calendar@example.com", session)
+        second_miss = sync_google_calendar(empty_planning, Path("unused.json"), "calendar@example.com", session)
+
+        self.assertEqual(first_miss["pending_deletion"], 1)
+        self.assertEqual(second_miss["deleted"], 1)
+        self.assertIn("manual", session.events)
 
 
 if __name__ == "__main__":

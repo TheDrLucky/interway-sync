@@ -46,6 +46,7 @@ TOOLTIP_SELECTOR = ",".join(
 )
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 PARIS = ZoneInfo("Europe/Paris")
+INTERWAY_EVENT_SOURCE = "Source : Planning Tech Web Interway"
 
 
 def clean(value: str) -> str:
@@ -308,7 +309,7 @@ def google_event(day: dict[str, object], intervention: dict[str, object]) -> dic
     end = start + timedelta(minutes=int(intervention.get("duree_minutes") or 15))
     reference = intervention.get("reference")
     identity = reference or f'{day["date"]}|{intervention["heure"]}|{intervention["ville"]}'
-    description = ["Source : Planning Tech Web Interway"]
+    description = [INTERWAY_EVENT_SOURCE]
     if intervention.get("activite"):
         description.append(f'Activité : {intervention["activite"]}')
     if reference:
@@ -321,6 +322,7 @@ def google_event(day: dict[str, object], intervention: dict[str, object]) -> dic
         "start": {"dateTime": start.isoformat(), "timeZone": "Europe/Paris"},
         "end": {"dateTime": end.isoformat(), "timeZone": "Europe/Paris"},
         "visibility": "private",
+        "extendedProperties": {"private": {"interwaySync": "1"}},
     }
 
 
@@ -337,33 +339,106 @@ def sync_google_calendar(
             raise RuntimeError("La clé Google Agenda est invalide ou illisible.") from error
 
     base_url = f"https://www.googleapis.com/calendar/v3/calendars/{quote(calendar_id, safe='')}/events"
-    stats = {"created": 0, "updated": 0, "unchanged": 0}
-    compared_fields = ("summary", "location", "description", "start", "end", "visibility")
+    try:
+        dates = [date.fromisoformat(str(day["date"])) for day in planning["jours"]]
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("La période Interway est invalide ; aucune suppression effectuée.") from error
+    if not dates:
+        raise RuntimeError("La période Interway est vide ; aucune suppression effectuée.")
 
-    for day in planning["jours"]:
-        for intervention in day["interventions"]:
-            event = google_event(day, intervention)
-            event_url = f'{base_url}/{event["id"]}'
-            try:
-                response = session.get(event_url)
-                if response.status_code == 404:
-                    response = session.post(base_url, params={"sendUpdates": "none"}, json=event)
-                    action = "created"
-                elif response.ok and all(response.json().get(key) == event[key] for key in compared_fields):
-                    stats["unchanged"] += 1
-                    continue
-                elif response.ok:
-                    response = session.put(
-                        event_url, params={"sendUpdates": "none"}, json=event
-                    )
-                    action = "updated"
-                else:
-                    action = ""
-            except Exception as error:
-                raise RuntimeError("Connexion à Google Agenda impossible.") from error
+    stats = {"created": 0, "updated": 0, "unchanged": 0, "pending_deletion": 0, "deleted": 0}
+    compared_fields = (
+        "summary",
+        "location",
+        "description",
+        "start",
+        "end",
+        "visibility",
+        "extendedProperties",
+    )
+    current_events = {
+        event["id"]: event
+        for day in planning["jours"]
+        for intervention in day["interventions"]
+        for event in (google_event(day, intervention),)
+    }
+
+    existing_events = {}
+    page_token = None
+    try:
+        while True:
+            params = {
+                "timeMin": datetime.combine(min(dates), datetime.min.time(), PARIS).isoformat(),
+                "timeMax": datetime.combine(
+                    max(dates) + timedelta(days=1), datetime.min.time(), PARIS
+                ).isoformat(),
+                "singleEvents": "true",
+                "showDeleted": "false",
+                "maxResults": 2500,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            response = session.get(base_url, params=params)
             if not response.ok:
                 raise RuntimeError(f"Google Agenda a répondu avec l'erreur {response.status_code}.")
-            stats[action] += 1
+            data = response.json()
+            for event in data.get("items", []):
+                private = event.get("extendedProperties", {}).get("private", {})
+                if private.get("interwaySync") == "1" or event.get(
+                    "description", ""
+                ).splitlines()[:1] == [INTERWAY_EVENT_SOURCE]:
+                    existing_events[event["id"]] = event
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+    except RuntimeError:
+        raise
+    except Exception as error:
+        raise RuntimeError("Connexion à Google Agenda impossible.") from error
+
+    for event in current_events.values():
+        event_url = f'{base_url}/{event["id"]}'
+        try:
+            response = session.get(event_url)
+            if response.status_code == 404:
+                response = session.post(base_url, params={"sendUpdates": "none"}, json=event)
+                action = "created"
+            elif response.ok and all(response.json().get(key) == event[key] for key in compared_fields):
+                stats["unchanged"] += 1
+                continue
+            elif response.ok:
+                response = session.put(event_url, params={"sendUpdates": "none"}, json=event)
+                action = "updated"
+            else:
+                action = ""
+        except Exception as error:
+            raise RuntimeError("Connexion à Google Agenda impossible.") from error
+        if not response.ok:
+            raise RuntimeError(f"Google Agenda a répondu avec l'erreur {response.status_code}.")
+        stats[action] += 1
+
+    for event_id, event in existing_events.items():
+        if event_id in current_events:
+            continue
+        event_url = f"{base_url}/{quote(event_id, safe='')}"
+        private = dict(event.get("extendedProperties", {}).get("private", {}))
+        try:
+            if private.get("interwayMissing") == "1":
+                response = session.delete(event_url, params={"sendUpdates": "none"})
+                action = "deleted"
+            else:
+                private.update({"interwaySync": "1", "interwayMissing": "1"})
+                response = session.patch(
+                    event_url,
+                    params={"sendUpdates": "none"},
+                    json={"extendedProperties": {"private": private}},
+                )
+                action = "pending_deletion"
+        except Exception as error:
+            raise RuntimeError("Connexion à Google Agenda impossible.") from error
+        if not response.ok:
+            raise RuntimeError(f"Google Agenda a répondu avec l'erreur {response.status_code}.")
+        stats[action] += 1
     return stats
 
 
@@ -510,7 +585,8 @@ def main() -> int:
         print(
             "Google Agenda : "
             f'{stats["created"]} créé(s), {stats["updated"]} modifié(s), '
-            f'{stats["unchanged"]} inchangé(s).'
+            f'{stats["unchanged"]} inchangé(s), {stats["pending_deletion"]} en attente, '
+            f'{stats["deleted"]} supprimé(s).'
         )
     return 0
 
