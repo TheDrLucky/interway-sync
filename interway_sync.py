@@ -402,18 +402,22 @@ def sync_google_calendar(
     for event in current_events.values():
         event_url = f'{base_url}/{event["id"]}'
         try:
-            response = session.get(event_url)
-            if response.status_code == 404:
+            existing = existing_events.get(event["id"])
+            if existing is None:
                 response = session.post(base_url, params={"sendUpdates": "none"}, json=event)
-                action = "created"
-            elif response.ok and all(response.json().get(key) == event[key] for key in compared_fields):
+                if response.status_code == 409:
+                    response = session.put(
+                        event_url, params={"sendUpdates": "none"}, json=event
+                    )
+                    action = "updated"
+                else:
+                    action = "created"
+            elif all(existing.get(key) == event[key] for key in compared_fields):
                 stats["unchanged"] += 1
                 continue
-            elif response.ok:
+            else:
                 response = session.put(event_url, params={"sendUpdates": "none"}, json=event)
                 action = "updated"
-            else:
-                action = ""
         except Exception as error:
             raise RuntimeError("Connexion à Google Agenda impossible.") from error
         if not response.ok:

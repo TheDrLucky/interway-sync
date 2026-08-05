@@ -31,10 +31,9 @@ class CalendarSession:
         }
 
     def get(self, url, params=None):
-        if params is not None:
-            return Response(200, {"items": list(self.events.values())})
-        event = self.events.get(url.rsplit("/", 1)[-1])
-        return Response(200, event) if event else Response(404)
+        if params is None:
+            raise AssertionError("La liste Google suffit ; aucun GET individuel n'est nécessaire")
+        return Response(200, {"items": list(self.events.values())})
 
     def post(self, url, params, json):
         self.created = json
