@@ -20,6 +20,12 @@ LOGIN_URL = "https://planningtechweb.interway.fr/login"
 PLANNING_URL = "https://planningtechweb.interway.fr/"
 STATUSES = {"PM", "PA", "NO", "NW", "NT", "NR", "-"}
 WORK_STATUSES = {"PM", "PA", "NO", "NW"}
+WORK_SLOTS = {
+    "NO": ("FDJ - Travail", "08:00", "16:30"),
+    "NW": ("FDJ - Travail week-end", "08:00", "16:30"),
+    "PM": ("FDJ - Matin", "08:00", "12:00"),
+    "PA": ("FDJ - Après-midi", "12:30", "16:30"),
+}
 MONTHS = {
     "janvier": 1,
     "fevrier": 2,
@@ -324,8 +330,30 @@ def google_event(day: dict[str, object], intervention: dict[str, object]) -> dic
         "description": "\n".join(description),
         "start": {"dateTime": start.isoformat(), "timeZone": "Europe/Paris"},
         "end": {"dateTime": end.isoformat(), "timeZone": "Europe/Paris"},
+        "transparency": "opaque",
         "extendedProperties": {"private": {"interwaySync": "1"}},
     }
+
+
+def google_events(day: dict[str, object]) -> list[dict[str, object]]:
+    status = str(day.get("statut", ""))
+    interventions = day.get("interventions", [])
+    if status in {"NO", "NW"} or (status in {"PM", "PA"} and not interventions):
+        summary, start_time, end_time = WORK_SLOTS[status]
+        start = datetime.fromisoformat(f'{day["date"]}T{start_time}').replace(tzinfo=PARIS)
+        end = datetime.fromisoformat(f'{day["date"]}T{end_time}').replace(tzinfo=PARIS)
+        return [{
+            "id": hashlib.sha256(f'interway:work:{day["date"]}'.encode()).hexdigest(),
+            "summary": summary,
+            "description": f"{INTERWAY_EVENT_SOURCE}\nStatut : {status}",
+            "start": {"dateTime": start.isoformat(), "timeZone": "Europe/Paris"},
+            "end": {"dateTime": end.isoformat(), "timeZone": "Europe/Paris"},
+            "transparency": "opaque",
+            "extendedProperties": {"private": {"interwaySync": "1"}},
+        }]
+    if status in {"PM", "PA"}:
+        return [google_event(day, intervention) for intervention in interventions]
+    return []
 
 
 def sync_google_calendar(
@@ -355,13 +383,13 @@ def sync_google_calendar(
         "description",
         "start",
         "end",
+        "transparency",
         "extendedProperties",
     )
     current_events = {
         event["id"]: event
         for day in planning["jours"]
-        for intervention in day["interventions"]
-        for event in (google_event(day, intervention),)
+        for event in google_events(day)
     }
 
     existing_events = {}
@@ -410,7 +438,7 @@ def sync_google_calendar(
                     action = "updated"
                 else:
                     action = "created"
-            elif all(existing.get(key) == event[key] for key in compared_fields):
+            elif all(existing.get(key) == event.get(key) for key in compared_fields):
                 stats["unchanged"] += 1
                 continue
             else:

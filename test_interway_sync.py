@@ -25,7 +25,7 @@ class Response:
 
 class CalendarSession:
     def __init__(self):
-        self.created = None
+        self.created = []
         self.events = {
             "manual": {"id": "manual", "summary": "Personnel"},
         }
@@ -36,7 +36,7 @@ class CalendarSession:
         return Response(200, {"items": list(self.events.values())})
 
     def post(self, url, params, json):
-        self.created = json
+        self.created.append(json)
         self.events[json["id"]] = json
         return Response(200, json)
 
@@ -137,6 +137,7 @@ class InterwaySyncTest(unittest.TestCase):
             "jours": [
                 {
                     "date": "2026-07-06",
+                    "statut": "PM",
                     "interventions": [
                         {
                             "heure": "11:33",
@@ -156,17 +157,46 @@ class InterwaySyncTest(unittest.TestCase):
             result,
             {"created": 1, "updated": 0, "unchanged": 0, "pending_deletion": 0, "deleted": 0},
         )
-        self.assertEqual(session.created["summary"], "EPACK - Vern-sur-Seiche")
-        self.assertEqual(session.created["start"]["dateTime"], "2026-07-06T11:33:00+02:00")
-        self.assertNotIn("visibility", session.created)
+        self.assertEqual(session.created[0]["summary"], "EPACK - Vern-sur-Seiche")
+        self.assertEqual(session.created[0]["start"]["dateTime"], "2026-07-06T11:33:00+02:00")
+        self.assertEqual(session.created[0]["transparency"], "opaque")
+        self.assertNotIn("visibility", session.created[0])
 
-        empty_planning = {"jours": [{"date": "2026-07-06", "interventions": []}]}
+        empty_planning = {
+            "jours": [{"date": "2026-07-06", "statut": "NT", "interventions": []}]
+        }
         first_miss = sync_google_calendar(empty_planning, Path("unused.json"), "calendar@example.com", session)
         second_miss = sync_google_calendar(empty_planning, Path("unused.json"), "calendar@example.com", session)
 
         self.assertEqual(first_miss["pending_deletion"], 1)
         self.assertEqual(second_miss["deleted"], 1)
         self.assertIn("manual", session.events)
+
+    def test_fdj_busy_blocks(self):
+        session = CalendarSession()
+        planning = {
+            "jours": [
+                {"date": "2026-08-03", "statut": "NO", "interventions": [{"ville": "Ignorée"}]},
+                {"date": "2026-08-04", "statut": "NW", "interventions": []},
+                {"date": "2026-08-05", "statut": "PM", "interventions": []},
+                {"date": "2026-08-06", "statut": "PA", "interventions": []},
+                {"date": "2026-08-07", "statut": "NT", "interventions": []},
+            ]
+        }
+
+        result = sync_google_calendar(planning, Path("unused.json"), "calendar@example.com", session)
+        events = {event["summary"]: event for event in session.created}
+        second_result = sync_google_calendar(
+            planning, Path("unused.json"), "calendar@example.com", session
+        )
+
+        self.assertEqual(result["created"], 4)
+        self.assertEqual(events["FDJ - Travail"]["start"]["dateTime"], "2026-08-03T08:00:00+02:00")
+        self.assertEqual(events["FDJ - Travail"]["end"]["dateTime"], "2026-08-03T16:30:00+02:00")
+        self.assertEqual(events["FDJ - Matin"]["end"]["dateTime"], "2026-08-05T12:00:00+02:00")
+        self.assertEqual(events["FDJ - Après-midi"]["start"]["dateTime"], "2026-08-06T12:30:00+02:00")
+        self.assertTrue(all(event["transparency"] == "opaque" for event in events.values()))
+        self.assertEqual(second_result["unchanged"], 4)
 
 
 if __name__ == "__main__":

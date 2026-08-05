@@ -1,6 +1,6 @@
 # Interway Sync pour Proxmox
 
-Crée un LXC `140`, se connecte à Planning Tech Web et synchronise chaque jour les interventions EPACK vers l'agenda Google `Interway`. Aucune connexion Odoo n'est incluse.
+Crée un LXC `140`, se connecte à Planning Tech Web et synchronise les périodes occupées vers l'agenda Google principal `GodeloupF`, ensuite repris par Odoo. Les journées FDJ et les week-ends sont bloqués de 08:00 à 16:30, les matinées de 08:00 à 12:00 et les après-midi de 12:30 à 16:30. Pour une demi-journée EPACK, seule l'intervention exacte est créée.
 
 Dans le **Shell du serveur Proxmox**, colle cette ligne :
 
@@ -8,7 +8,7 @@ Dans le **Shell du serveur Proxmox**, colle cette ligne :
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/TheDrLucky/interway-sync/main/install-interway-sync.sh)"
 ```
 
-La clé Google doit être présente sur Proxmox dans `/root/interway-google.json`. L'installation demande l'identifiant Interway puis le mot de passe, sans afficher celui-ci. Elle crée un LXC Debian à l'adresse `192.168.10.140`, avec 1 cœur, 1 Go de mémoire et 8 Go de disque, puis vérifie une première synchronisation. Le planning est ensuite actualisé à 06:00, 12:00 et 18:00, heure de Paris. Un EPACK absent est supprimé de Google Agenda seulement après deux contrôles consécutifs ; une erreur Interway ne déclenche aucune suppression.
+La clé Google doit être présente sur Proxmox dans `/root/interway-google.json`. L'installation demande l'identifiant Interway puis le mot de passe, sans afficher celui-ci. Elle crée un LXC Debian à l'adresse `192.168.10.140`, avec 1 cœur, 1 Go de mémoire et 8 Go de disque, puis vérifie une première synchronisation. Le planning est ensuite actualisé à 06:00, 12:00 et 18:00, heure de Paris. Un événement absent est supprimé de Google Agenda seulement après deux contrôles consécutifs ; une erreur Interway ne déclenche aucune suppression.
 
 Lors du prochain changement de mot de passe, relance exactement la même commande : elle mettra uniquement les identifiants à jour dans le LXC géré par Interway Sync.
 
