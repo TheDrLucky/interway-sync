@@ -438,7 +438,11 @@ def sync_google_calendar(
                     action = "updated"
                 else:
                     action = "created"
-            elif all(existing.get(key) == event.get(key) for key in compared_fields):
+            elif all(
+                existing.get(key, "opaque" if key == "transparency" else None)
+                == event.get(key)
+                for key in compared_fields
+            ):
                 stats["unchanged"] += 1
                 continue
             else:

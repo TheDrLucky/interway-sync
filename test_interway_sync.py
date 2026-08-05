@@ -186,9 +186,6 @@ class InterwaySyncTest(unittest.TestCase):
 
         result = sync_google_calendar(planning, Path("unused.json"), "calendar@example.com", session)
         events = {event["summary"]: event for event in session.created}
-        second_result = sync_google_calendar(
-            planning, Path("unused.json"), "calendar@example.com", session
-        )
 
         self.assertEqual(result["created"], 4)
         self.assertEqual(events["FDJ - Travail"]["start"]["dateTime"], "2026-08-03T08:00:00+02:00")
@@ -196,6 +193,12 @@ class InterwaySyncTest(unittest.TestCase):
         self.assertEqual(events["FDJ - Matin"]["end"]["dateTime"], "2026-08-05T12:00:00+02:00")
         self.assertEqual(events["FDJ - Après-midi"]["start"]["dateTime"], "2026-08-06T12:30:00+02:00")
         self.assertTrue(all(event["transparency"] == "opaque" for event in events.values()))
+
+        for event in session.events.values():
+            event.pop("transparency", None)
+        second_result = sync_google_calendar(
+            planning, Path("unused.json"), "calendar@example.com", session
+        )
         self.assertEqual(second_result["unchanged"], 4)
 
 
