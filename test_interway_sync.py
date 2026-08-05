@@ -158,6 +158,7 @@ class InterwaySyncTest(unittest.TestCase):
         )
         self.assertEqual(session.created["summary"], "EPACK - Vern-sur-Seiche")
         self.assertEqual(session.created["start"]["dateTime"], "2026-07-06T11:33:00+02:00")
+        self.assertNotIn("visibility", session.created)
 
         empty_planning = {"jours": [{"date": "2026-07-06", "interventions": []}]}
         first_miss = sync_google_calendar(empty_planning, Path("unused.json"), "calendar@example.com", session)

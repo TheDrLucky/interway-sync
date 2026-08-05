@@ -324,7 +324,6 @@ def google_event(day: dict[str, object], intervention: dict[str, object]) -> dic
         "description": "\n".join(description),
         "start": {"dateTime": start.isoformat(), "timeZone": "Europe/Paris"},
         "end": {"dateTime": end.isoformat(), "timeZone": "Europe/Paris"},
-        "visibility": "private",
         "extendedProperties": {"private": {"interwaySync": "1"}},
     }
 
@@ -356,7 +355,6 @@ def sync_google_calendar(
         "description",
         "start",
         "end",
-        "visibility",
         "extendedProperties",
     )
     current_events = {
