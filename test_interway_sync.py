@@ -112,7 +112,7 @@ class InterwaySyncTest(unittest.TestCase):
                 </table>
                 <table>
                   <tr><th>Technicien</th><th>Nom</th><th>29/06</th></tr>
-                  <tr><td>123456</td><td>Technicien BUSINESS PARTNER</td><td>PM</td></tr>
+                  <tr><td>000123456</td><td>Technicien BUSINESS PARTNER</td><td>PM</td></tr>
                 </table>
                 <script>
                   document.querySelector('#epack').addEventListener('mouseenter', () => {

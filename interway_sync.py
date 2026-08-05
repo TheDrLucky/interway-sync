@@ -191,7 +191,10 @@ def require_technician(page: Page, technician_id: str) -> None:
     rows = page.locator("tr")
     for index in range(rows.count()):
         values = [clean(value) for value in rows.nth(index).locator("th, td").all_inner_texts()]
-        if technician_id in values:
+        if technician_id in values or (
+            technician_id.isdigit()
+            and any(value.isdigit() and int(value) == int(technician_id) for value in values)
+        ):
             return
     raise RuntimeError(
         f"Ligne du technicien {technician_id} introuvable. "
