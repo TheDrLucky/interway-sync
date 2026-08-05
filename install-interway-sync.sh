@@ -75,6 +75,30 @@ Unit=interway-sync.service
 WantedBy=timers.target
 EOF
 
+cat >"$INSTALL_DIR/interway-sync.service" <<EOF
+[Unit]
+Description=Extraction du planning Interway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=interway-sync
+Group=interway-sync
+WorkingDirectory=/opt/interway-sync
+Environment=PYTHONUNBUFFERED=1
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/interway-sync/browsers
+RuntimeDirectory=interway-sync
+RuntimeDirectoryMode=0700
+ExecStart=/opt/interway-sync/.venv/bin/python /opt/interway-sync/interway_sync.py --technicien $INTERWAY_USER --credentials /etc/interway-sync/credentials --profile /run/interway-sync/profile --state /run/interway-sync/state.json --output /var/lib/interway-sync/planning.json --previous-weeks 1 --next-weeks 8 --google-credentials /etc/interway-sync/google-service-account.json --google-calendar $GOOGLE_CALENDAR_ID
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/interway-sync
+TimeoutStartSec=15min
+EOF
+
 ADOPTED=0
 if pct config "$CTID" >/dev/null 2>&1; then
     pct status "$CTID" | grep -q running || pct start "$CTID"
@@ -86,6 +110,7 @@ if pct config "$CTID" >/dev/null 2>&1; then
         pct exec "$CTID" -- test -f /etc/interway-sync/google-service-account.json || \
             die "clé Google manquante : $GOOGLE_KEY"
         pct push "$CTID" "$INSTALL_DIR/interway_sync.py" /opt/interway-sync/interway_sync.py --perms 0755
+        pct push "$CTID" "$INSTALL_DIR/interway-sync.service" /etc/systemd/system/interway-sync.service --perms 0644
         pct push "$CTID" "$INSTALL_DIR/interway-sync.timer" /etc/systemd/system/interway-sync.timer --perms 0644
         pct exec "$CTID" -- chown root:interway-sync /etc/interway-sync/credentials /etc/interway-sync/google-service-account.json
         pct exec "$CTID" -- bash -lc 'systemctl daemon-reload; systemctl start interway-sync.service; systemctl enable interway-sync.timer; systemctl restart interway-sync.timer'
@@ -166,31 +191,9 @@ done
 apt-get install -y ca-certificates python3 python3-venv
 id -u interway-sync >/dev/null 2>&1 || useradd --system --home-dir /var/lib/interway-sync --create-home --shell /usr/sbin/nologin interway-sync
 install -d -o root -g root -m 0755 /opt/interway-sync
-install -d -o interway-sync -g interway-sync -m 0700 /var/lib/interway-sync /var/lib/interway-sync/profile
+install -d -o interway-sync -g interway-sync -m 0700 /var/lib/interway-sync
 install -d -o root -g interway-sync -m 0750 /etc/interway-sync
 '
-
-cat >"$INSTALL_DIR/interway-sync.service" <<EOF
-[Unit]
-Description=Extraction du planning Interway
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-User=interway-sync
-Group=interway-sync
-WorkingDirectory=/opt/interway-sync
-Environment=PYTHONUNBUFFERED=1
-Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/interway-sync/browsers
-ExecStart=/opt/interway-sync/.venv/bin/python /opt/interway-sync/interway_sync.py --technicien $INTERWAY_USER --credentials /etc/interway-sync/credentials --profile /var/lib/interway-sync/profile --state /var/lib/interway-sync/state.json --output /var/lib/interway-sync/planning.json --previous-weeks 1 --next-weeks 8 --google-credentials /etc/interway-sync/google-service-account.json --google-calendar $GOOGLE_CALENDAR_ID
-PrivateTmp=true
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/interway-sync
-TimeoutStartSec=15min
-EOF
 
 pct push "$CTID" "$INSTALL_DIR/interway_sync.py" /opt/interway-sync/interway_sync.py --perms 0755
 pct push "$CTID" "$INSTALL_DIR/requirements.txt" /opt/interway-sync/requirements.txt --perms 0644
